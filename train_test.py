@@ -3,7 +3,7 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader, TensorDataset
 
 from VRAE.utils import custom_collate_fn
-from VRAE.models import VRAE, Encoder
+from VRAE.models import VRAE, Encoder, Decoder
 
 dataset=torch.load('train_dataset_samples.pt')
 torch.manual_seed(42)
@@ -29,6 +29,12 @@ Enc = Encoder(
     num_hidden=NUM_HIDDEN,
     num_latent=NUM_LATENT
 )
+Dec = Decoder(
+    sensor_dim=SENSOR_DIM,
+    num_routes=NUM_ROUTES,
+    num_hidden=NUM_HIDDEN,
+    num_latent=NUM_LATENT
+)
 
 for batch in train_loader:
     z,z_mean,z_var = Enc(batch) 
@@ -36,4 +42,13 @@ for batch in train_loader:
     print(z.shape)
     print(z_mean.shape)
     print(z_var.shape)
+    t,r = Dec(z, batch['lengths'])
+    print(t.shape)
+    print(r.shape)
+    t, r = Dec.autoregressive_forward(z, batch['lengths'], teacher_inputs=None, teacher_forcing_ratio=0.0)
+    
+    print("Latent shape:", z.shape)
+    print("Times output shape:", t.shape)
+    print("Routes output shape:", r.shape)
+    break
     break
