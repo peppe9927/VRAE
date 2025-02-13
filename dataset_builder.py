@@ -4,13 +4,13 @@ import numpy as np
 from multiprocessing import Process, Semaphore
 import logging
 import os
-import glob  # Importa il modulo glob per la gestione dei pattern dei file
+import glob  # Import the glob module for handling file patterns
 import argparse
 
-# Configura il logging
+# Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# Definizione delle possibilità di rotte
+# Definition of route possibilities
 possibilities = {
     1: [['-E3', 'E1'], '-E3'],
     2: [['-E3', 'E2'], '-E3'],
@@ -44,14 +44,14 @@ possibilities = {
     30: [['-E4', '-E0', 'E3'], '-E4']
 }
 
-MEANs = {'low':[0.2, 0.3, 0.4],
-         'moderated':[1.0, 1.1, 1.2],
-         'heavy':[7.0,8.0,9.0]}
-MAX_QUEUEs = {'low':[3,4,5],
-              'moderated':[10,11],
-              'heavy':[18,19,20]}
+MEANs = {'low': [0.2, 0.3, 0.4],
+         'moderated': [1.0, 1.1, 1.2],
+         'heavy': [7.0, 8.0, 9.0]}
+MAX_QUEUEs = {'low': [3, 4, 5],
+              'moderated': [10, 11],
+              'heavy': [18, 19, 20]}
 
-# Template del file di configurazione
+# Configuration file template
 config_template = """<configuration>
     <input>
         <net-file value="net.net.xml"/>
@@ -65,28 +65,28 @@ config_template = """<configuration>
 </configuration>
 """
 
-# Directory per i file di configurazione temporanei
+# Directory for temporary configuration files
 config_dir = "./temp_files"
 
-# Directory per i file di output
+# Directory for output files
 output_dir = "./datasets"
 
 
 def create_config_file(index):
     """
-    Crea un file di configurazione con il template fornito.
+    Create a configuration file using the provided template.
     """
     os.makedirs(config_dir, exist_ok=True)
     config_filename = os.path.join(config_dir, f"config_file_{index}.sumocfg")
     with open(config_filename, 'w') as file:
         file.write(config_template)
-    logging.info(f"File di configurazione creato: {config_filename}")
+    logging.info(f"Configuration file created: {config_filename}")
     return config_filename
 
 
 def creation_dynamic_route(sumo_config, worker_label, iteration, state):
     """
-    Gestisce la dinamica delle rotte e la generazione dei veicoli durante la simulazione.
+    Handle dynamic routing and vehicle generation during the simulation.
     """
     try:
         mean = np.random.choice(MEANs[state])
@@ -94,10 +94,10 @@ def creation_dynamic_route(sumo_config, worker_label, iteration, state):
         step = 0
         vehicle_id = 0
         vehicles = []
-        # Rimosso traci.load() poiché la connessione è già stabilita in run_simulation
+        # Removed traci.load() since the connection is already established in run_simulation
         possible_routes = list(possibilities.keys())
 
-        # Aggiungi tutte le rotte definite
+        # Add all defined routes
         for i in possible_routes:
             traci.route.add(f'route{i}', possibilities[i][0])
 
@@ -120,7 +120,7 @@ def creation_dynamic_route(sumo_config, worker_label, iteration, state):
             traci.simulationStep()
             step += 1
 
-        state_dir = os.path.join(output_dir, state) # Crea una directory per lo stato del traffico
+        state_dir = os.path.join(output_dir, state)  # Create a directory for the traffic state
         os.makedirs(state_dir, exist_ok=True)
 
         output_file = os.path.join(
@@ -137,88 +137,87 @@ def creation_dynamic_route(sumo_config, worker_label, iteration, state):
                 fp.write("  </vehicle>\n")
             fp.write("</routes>\n")
 
-        logging.info(f"Simulazione completata per worker {worker_label}")
+        logging.info(f"Simulation completed for worker {worker_label}")
 
     except Exception as e:
-        logging.error(f"Errore nella funzione di simulazione per worker {worker_label}: {e}")
+        logging.error(f"Error in simulation function for worker {worker_label}: {e}")
 
 
 def run_simulation(label, port, sumo_config, semaphore, iteration, state):
     """
-    Esegue la simulazione SUMO per un determinato worker.
+    Run the SUMO simulation for a specific worker.
     """
     with semaphore:
         try:
-            logging.info(f"Inizializzazione worker {label} sulla porta {port} con config {sumo_config}")
+            logging.info(f"Initializing worker {label} on port {port} with config {sumo_config}")
             sumoCmd = ["sumo", "-c", sumo_config]
             traci.start(sumoCmd, port=port, label=str(label))
             
             creation_dynamic_route(sumo_config, label, iteration, state)
             
         except Exception as e:
-            logging.error(f"Errore nella simulazione {label}: {e}")
+            logging.error(f"Error in simulation {label}: {e}")
         finally:
             try:
                 traci.switch(str(label))
                 traci.close()
-                logging.info(f"Chiusura connessione per worker {label}")
+                logging.info(f"Connection closed for worker {label}")
             except Exception as e:
-                logging.error(f"Errore durante la chiusura di worker {label}: {e}")
+                logging.error(f"Error closing worker {label}: {e}")
 
 
 def main(NUM_ITERATIONS, NUM_PROCESSES, MAX_CONCURRENT, state):
     config_files = [create_config_file(i) for i in range(1, NUM_PROCESSES + 1)]
-    logging.info(f"{NUM_PROCESSES} file di configurazione creati nella directory '{config_dir}'.")
+    logging.info(f"{NUM_PROCESSES} configuration files created in directory '{config_dir}'.")
 
-    # Calcola quante iterazioni per batch
+    # Calculate the number of iterations per batch
     iterations_per_batch = NUM_ITERATIONS // NUM_PROCESSES
     for iteration in range(iterations_per_batch):
-        # Generazione delle label e delle porte
-        labels = [i for i in range(1, NUM_PROCESSES + 1)]  # Ora labels sono numeri interi
+        # Generate labels and ports
+        labels = [i for i in range(1, NUM_PROCESSES + 1)]  # Labels are now integers
         base_port = 8813
         ports = [base_port + i for i in range(NUM_PROCESSES)]
 
         processes = []
-        semaphore = Semaphore(MAX_CONCURRENT)  # Limita il numero di processi concorrenti
+        semaphore = Semaphore(MAX_CONCURRENT)  # Limit the number of concurrent processes
 
         for label, port, config in zip(labels, ports, config_files):
             p = Process(target=run_simulation, args=(label, port, config, semaphore, iteration, state))
             p.start()
             processes.append(p)
-            logging.info(f"Processo avviato: worker {label} sulla porta {port}")
+            logging.info(f"Worker {label} started on port {port}")
 
-        # Attendi che tutti i processi terminino
+        # Wait for all processes to finish
         for p in processes:
             p.join()
 
-    logging.info("Tutte le simulazioni sono state completate.")
+    logging.info("All simulations have been completed.")
 
     try:
-        # Trova tutti i file di configurazione creati
+        # Find all created configuration files
         config_pattern = os.path.join(config_dir, "config_file_*.sumocfg")
         config_files_created = glob.glob(config_pattern)
 
         for file_path in config_files_created:
             try:
                 os.remove(file_path)
-                logging.info(f"File eliminato: {file_path}")
+                logging.info(f"File deleted: {file_path}")
             except Exception as e:
-                logging.error(f"Errore nell'eliminazione del file {file_path}: {e}")
+                logging.error(f"Error deleting file {file_path}: {e}")
 
-        logging.info(f"Tutti i file di configurazione nella directory '{config_dir}' sono stati eliminati.")
+        logging.info(f"All configuration files in directory '{config_dir}' have been deleted.")
     except Exception as e:
-        logging.error(f"Errore durante la ricerca o eliminazione dei file di configurazione: {e}")
+        logging.error(f"Error searching or deleting configuration files: {e}")
 
 
 if __name__ == "__main__":
-    
-    # Definizione degli argomenti della riga di comando
-    parser = argparse.ArgumentParser(description="Simulazione SUMO con multiprocessing")
-    parser.add_argument('--iterations', type=int, default=200, help='Numero totale di iterazioni')
-    parser.add_argument('--processes', type=int, default=100, help='Numero totale di processi')
-    parser.add_argument('--concurrent', type=int, default=50, help='Numero massimo di processi concorrenti')
-    parser.add_argument('--state', type=str, choices=['low', 'moderated', 'heavy'], required=True, help='Stato del traffico (low, moderated, heavy)')
+    # Define command-line arguments
+    parser = argparse.ArgumentParser(description="SUMO simulation with multiprocessing")
+    parser.add_argument('--iterations', type=int, default=200, help='Total number of iterations')
+    parser.add_argument('--processes', type=int, default=100, help='Total number of processes')
+    parser.add_argument('--concurrent', type=int, default=50, help='Maximum number of concurrent processes')
+    parser.add_argument('--state', type=str, choices=['low', 'moderated', 'heavy'], required=True,
+                        help='Traffic state (low, moderated, heavy)')
     args = parser.parse_args()
     
-
-    main(args.iterations, args.processes, args.concurrent,args.state) # Esegui la simulazione
+    main(args.iterations, args.processes, args.concurrent, args.state)  # Run the simulation

@@ -1,20 +1,17 @@
 import argparse
 import torch
 from torch.utils.data import DataLoader
-import xml.etree.ElementTree as ET
-import torch.nn.functional as F
-from utils import custom_collate_fn
-from utils import TrafficGenerativeDataset
-import sys
 import os
+from utils import custom_collate_fn, TrafficGenerativeDataset
 
-# Esempio di dizionari per il mapping degli edge e delle classi
+# Example dictionary for mapping edges
 edge_vocab = {
     '<unk>': -1,
     'E0': 1, 'E1': 2, 'E2': 3, 'E3': 4, 'E4': 5, 'E5': 6, 'E6': 7,
     '-E0': 8, '-E1': 9, '-E2': 10, '-E3': 11, '-E4': 12, '-E5': 13, '-E6': 14
 }
 
+# Example dictionary for one-hot route mapping
 one_hot_routes = {
     '-E3 E1': 1,
     '-E3 E2': 2,
@@ -49,6 +46,7 @@ one_hot_routes = {
     'EOS': 31
 }
 
+# Example dictionary for mapping classes
 class_vocab = {
     '<unk>': -1,
     'low': 0,
@@ -57,35 +55,58 @@ class_vocab = {
 }
 
 def main():
-    parser = argparse.ArgumentParser(description="Script per caricare il dataset e creare il DataLoader")
-    parser.add_argument('--folder', type=str, default='./datasets',
-                        help='Cartella di riferimento per il dataset (default: ./datasets, es. ./datasets/low)')
-    parser.add_argument('--batch-size', type=int, required=True,
-                        help='Batch size per il DataLoader')
-    parser.add_argument('--save-path', type=str, required=True,
-                        help='Percorso di salvataggio del dataset')
+    # Parse command-line arguments
+    parser = argparse.ArgumentParser(description="Load dataset and create DataLoader")
+    parser.add_argument(
+        '--folder',
+        type=str,
+        default='./datasets',
+        help='Reference folder for the dataset (default: ./datasets)'
+    )
+    parser.add_argument(
+        '--batch-size',
+        type=int,
+        required=True,
+        help='Batch size for the DataLoader'
+    )
+    parser.add_argument(
+        '--save-path',
+        type=str,
+        required=True,
+        help='Path to save the processed dataset'
+    )
     args = parser.parse_args()
 
-    train_dir = args.folder
+    print(f"Loading dataset from: {args.folder}")
 
+    # Initialize the dataset
     train_dataset = TrafficGenerativeDataset(
-        root_dir=train_dir,
+        root_dir=args.folder,
         route_vocab=one_hot_routes,
         pad_token=edge_vocab.get('<unk>', -1),
         class_vocab=class_vocab
     )
 
-    print("Working directory:", os.getcwd())
-    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, collate_fn=custom_collate_fn)
+    print("Dataset successfully loaded.")
+    print(f"Total dataset size: {len(train_dataset)} samples")
 
-    torch.set_printoptions(threshold=torch.iinfo(torch.int64).max, precision=4)
-    print("Times del primo batch:", next(iter(train_loader))['times'])
-    print("Numero di elementi nel train_dataset:", len(train_dataset))
+    # Create a DataLoader for the dataset
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=args.batch_size,
+        shuffle=True,
+        collate_fn=custom_collate_fn
+    )
 
-    # Salva i sample per uso futuro (opzionale)
+    print(f"DataLoader initialized with batch size: {args.batch_size}")
+
+    # Convert the dataset to a list of samples
     all_samples = [sample for sample in train_dataset]
-    print("class_vocab:", next(iter(train_loader))['classes'])
+
+    # Save the processed dataset to the specified file path
     torch.save(all_samples, args.save_path)
+    print("Dataset conversion completed.")
+    print(f"Dataset saved to: {args.save_path}")
 
 if __name__ == '__main__':
     main()
