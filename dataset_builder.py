@@ -4,8 +4,8 @@ import numpy as np
 from multiprocessing import Process, Semaphore
 import logging
 import os
-import shutil
 import glob  # Importa il modulo glob per la gestione dei pattern dei file
+import argparse
 
 # Configura il logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -44,8 +44,12 @@ possibilities = {
     30: [['-E4', '-E0', 'E3'], '-E4']
 }
 
-MEANs = [0.2,0.3,0.4]
-MAX_QUEUEs = [5,6]
+MEANs = {'low':[0.2, 0.3, 0.4],
+         'moderated':[1.0, 1.1, 1.2],
+         'heavy':[7.0,8.0,9.0]}
+MAX_QUEUEs = {'low':[3,4,5],
+              'moderated':[10,11],
+              'heavy':[18,19,20]}
 
 # Template del file di configurazione
 config_template = """<configuration>
@@ -62,10 +66,11 @@ config_template = """<configuration>
 """
 
 # Directory per i file di configurazione temporanei
-config_dir = "./VRAE/temp_files"
+config_dir = "./temp_files"
 
 # Directory per i file di output
-output_dir = "./VRAE/datasets"
+output_dir = "./datasets"
+
 
 def create_config_file(index):
     """
@@ -78,19 +83,20 @@ def create_config_file(index):
     logging.info(f"File di configurazione creato: {config_filename}")
     return config_filename
 
-def creation_dynamic_route(sumo_config, worker_label, iteration):
+
+def creation_dynamic_route(sumo_config, worker_label, iteration, state):
     """
     Gestisce la dinamica delle rotte e la generazione dei veicoli durante la simulazione.
     """
     try:
-        mean = np.random.choice(MEANs)
-        max_queue = np.random.choice(MAX_QUEUEs)
+        mean = np.random.choice(MEANs[state])
+        max_queue = np.random.choice(MAX_QUEUEs[state])
         step = 0
-        vehicle_id = 0 
+        vehicle_id = 0
         vehicles = []
         # Rimosso traci.load() poiché la connessione è già stabilita in run_simulation
         possible_routes = list(possibilities.keys())
-        
+
         # Aggiungi tutte le rotte definite
         for i in possible_routes:
             traci.route.add(f'route{i}', possibilities[i][0])
@@ -107,20 +113,18 @@ def creation_dynamic_route(sumo_config, worker_label, iteration):
                         if queue_length < max_queue:
                             traci.vehicle.add(f"veh_{vehicle_id}", f"route{route}", typeID="DEFAULT_VEHTYPE")
                             vehicles.append({
-                                'id': vehicle_id, 
-                                'rou': possibilities[route][0], 
+                                'id': vehicle_id,
+                                'rou': possibilities[route][0],
                                 'depart': current_simulation_time
                             })
             traci.simulationStep()
             step += 1
 
-        # Assicurati che la directory di output esista
-        os.makedirs(output_dir, exist_ok=True)
+        state_dir = os.path.join(output_dir, state) # Crea una directory per lo stato del traffico
+        os.makedirs(state_dir, exist_ok=True)
 
-        # Correzione della concatenazione delle stringhe: somma invece di concatenazione
-        # worker_label è ora un numero intero
         output_file = os.path.join(
-            output_dir, 
+            state_dir,
             f"Cars_{worker_label + iteration * 100}.rou.xml"
         )
         with open(output_file, "w") as fp:
@@ -138,7 +142,8 @@ def creation_dynamic_route(sumo_config, worker_label, iteration):
     except Exception as e:
         logging.error(f"Errore nella funzione di simulazione per worker {worker_label}: {e}")
 
-def run_simulation(label, port, sumo_config, semaphore, iteration):
+
+def run_simulation(label, port, sumo_config, semaphore, iteration, state):
     """
     Esegue la simulazione SUMO per un determinato worker.
     """
@@ -148,7 +153,7 @@ def run_simulation(label, port, sumo_config, semaphore, iteration):
             sumoCmd = ["sumo", "-c", sumo_config]
             traci.start(sumoCmd, port=port, label=str(label))
             
-            creation_dynamic_route(sumo_config, label, iteration)
+            creation_dynamic_route(sumo_config, label, iteration, state)
             
         except Exception as e:
             logging.error(f"Errore nella simulazione {label}: {e}")
@@ -160,15 +165,14 @@ def run_simulation(label, port, sumo_config, semaphore, iteration):
             except Exception as e:
                 logging.error(f"Errore durante la chiusura di worker {label}: {e}")
 
-def main():
-    NUM_ITERATIONS = 200
-    NUM_PROCESSES = 100      # Numero totale di processi
-    MAX_CONCURRENT = 50     # Numero massimo di processi concorrenti
 
+def main(NUM_ITERATIONS, NUM_PROCESSES, MAX_CONCURRENT, state):
     config_files = [create_config_file(i) for i in range(1, NUM_PROCESSES + 1)]
     logging.info(f"{NUM_PROCESSES} file di configurazione creati nella directory '{config_dir}'.")
 
-    for iteration in range(NUM_ITERATIONS // NUM_PROCESSES):
+    # Calcola quante iterazioni per batch
+    iterations_per_batch = NUM_ITERATIONS // NUM_PROCESSES
+    for iteration in range(iterations_per_batch):
         # Generazione delle label e delle porte
         labels = [i for i in range(1, NUM_PROCESSES + 1)]  # Ora labels sono numeri interi
         base_port = 8813
@@ -178,7 +182,7 @@ def main():
         semaphore = Semaphore(MAX_CONCURRENT)  # Limita il numero di processi concorrenti
 
         for label, port, config in zip(labels, ports, config_files):
-            p = Process(target=run_simulation, args=(label, port, config, semaphore, iteration))
+            p = Process(target=run_simulation, args=(label, port, config, semaphore, iteration, state))
             p.start()
             processes.append(p)
             logging.info(f"Processo avviato: worker {label} sulla porta {port}")
@@ -186,7 +190,7 @@ def main():
         # Attendi che tutti i processi terminino
         for p in processes:
             p.join()
-        # Eliminazione solo dei file di configurazione creati
+
     logging.info("Tutte le simulazioni sono state completate.")
 
     try:
@@ -205,5 +209,16 @@ def main():
     except Exception as e:
         logging.error(f"Errore durante la ricerca o eliminazione dei file di configurazione: {e}")
 
+
 if __name__ == "__main__":
-    main()
+    
+    # Definizione degli argomenti della riga di comando
+    parser = argparse.ArgumentParser(description="Simulazione SUMO con multiprocessing")
+    parser.add_argument('--iterations', type=int, default=200, help='Numero totale di iterazioni')
+    parser.add_argument('--processes', type=int, default=100, help='Numero totale di processi')
+    parser.add_argument('--concurrent', type=int, default=50, help='Numero massimo di processi concorrenti')
+    parser.add_argument('--state', type=str, choices=['low', 'moderated', 'heavy'], required=True, help='Stato del traffico (low, moderated, heavy)')
+    args = parser.parse_args()
+    
+
+    main(args.iterations, args.processes, args.concurrent,args.state) # Esegui la simulazione
