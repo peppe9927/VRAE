@@ -84,7 +84,7 @@ def create_config_file(index):
     return config_filename
 
 
-def creation_dynamic_route(sumo_config, worker_label, iteration, state):
+def creation_dynamic_route(sumo_config, worker_label, iteration, state,num_processes):
     """
     Handle dynamic routing and vehicle generation during the simulation.
     """
@@ -125,7 +125,7 @@ def creation_dynamic_route(sumo_config, worker_label, iteration, state):
 
         output_file = os.path.join(
             state_dir,
-            f"Cars_{worker_label + iteration * 100}.rou.xml"
+            f"Cars_{worker_label + iteration * num_processes}.rou.xml"
         )
         with open(output_file, "w") as fp:
             fp.write("<routes>\n")
@@ -143,7 +143,7 @@ def creation_dynamic_route(sumo_config, worker_label, iteration, state):
         logging.error(f"Error in simulation function for worker {worker_label}: {e}")
 
 
-def run_simulation(label, port, sumo_config, semaphore, iteration, state):
+def run_simulation(label, port, sumo_config, semaphore, iteration, state,num_processes):
     """
     Run the SUMO simulation for a specific worker.
     """
@@ -153,7 +153,7 @@ def run_simulation(label, port, sumo_config, semaphore, iteration, state):
             sumoCmd = ["sumo", "-c", sumo_config]
             traci.start(sumoCmd, port=port, label=str(label))
             
-            creation_dynamic_route(sumo_config, label, iteration, state)
+            creation_dynamic_route(sumo_config, label, iteration, state,num_processes)
             
         except Exception as e:
             logging.error(f"Error in simulation {label}: {e}")
@@ -182,7 +182,7 @@ def main(NUM_ITERATIONS, NUM_PROCESSES, MAX_CONCURRENT, state):
         semaphore = Semaphore(MAX_CONCURRENT)  # Limit the number of concurrent processes
 
         for label, port, config in zip(labels, ports, config_files):
-            p = Process(target=run_simulation, args=(label, port, config, semaphore, iteration, state))
+            p = Process(target=run_simulation, args=(label, port, config, semaphore, iteration, state,NUM_PROCESSES))
             p.start()
             processes.append(p)
             logging.info(f"Worker {label} started on port {port}")
