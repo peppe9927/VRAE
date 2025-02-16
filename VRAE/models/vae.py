@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 from models.encoder import Encoder
-from models.decoder import Decoder
+from models.autoregressive_decoder import Decoder
 
 class VRAE(nn.Module):
     def __init__(self, sensor_dim, num_routes, route_emb_dim, num_hidden, num_latent):
@@ -18,7 +18,7 @@ class VRAE(nn.Module):
         self.encoder = Encoder(sensor_dim, num_routes, route_emb_dim, num_hidden, num_latent)
         self.decoder = Decoder(sensor_dim, num_routes, num_hidden, num_latent)
     
-    def forward(self, sensor_seq, route_seq):
+    def forward(self, routes, times, lengths):
         """
         Parametri:
           sensor_seq: (batch, seq_len, sensor_dim)
@@ -26,7 +26,7 @@ class VRAE(nn.Module):
         Restituisce:
           z_mean, z_log_var, z, sensor_recon, route_recon
         """
-        z_mean, z_log_var, z = self.encoder(sensor_seq, route_seq) # z è la sequenza encoded
-        seq_len = sensor_seq.size(1)
+        z_mean, z_log_var, z = self.encoder(routes,times, lengths) # z è la sequenza encoded
+        seq_len = lengths.max().item()
         sensor_recon, route_recon = self.decoder(z, seq_len)
         return z_mean, z_log_var, z, sensor_recon, route_recon

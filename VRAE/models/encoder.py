@@ -36,7 +36,7 @@ class Encoder(nn.Module):
         z = z_mean + eps * torch.exp(z_log_var / 2)
         return z
 
-    def forward(self, X):
+    def forward(self, routes, times, lengths):
         """
         Parametri:
           sensor_seq: tensore di forma (batch, seq_len, sensor_dim)
@@ -45,11 +45,11 @@ class Encoder(nn.Module):
           z_mean, z_log_var, z
         """
         # Elaborazione del ramo sensor
-        route_emb = self.route_embedding(X['routes'])  # calcola prima la sequenza di embedding
+        route_emb = self.route_embedding(routes)  # calcola prima la sequenza di embedding
         
-        combined = torch.cat([X['times'], route_emb], dim=-1)  # unisci le sequenze
-
-        packed_input = pack_padded_sequence(combined, X['lengths'], batch_first=True)
+        combined = torch.cat([times, route_emb], dim=-1)  # unisci le sequenze
+        
+        packed_input = pack_padded_sequence(combined,lengths, batch_first=True)
 
         sensor_out, (h_sensor, _) = self.sensor_lstm(packed_input) # passale a un lstm
         h_final = h_sensor[-1]  # forma: [batch, num_hidden]
