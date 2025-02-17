@@ -64,12 +64,6 @@ def main():
         help='Reference folder for the dataset (default: ./datasets)'
     )
     parser.add_argument(
-        '--batch-size',
-        type=int,
-        required=True,
-        help='Batch size for the DataLoader'
-    )
-    parser.add_argument(
         '--save-path',
         type=str,
         required=True,
@@ -89,16 +83,6 @@ def main():
 
     print("Dataset successfully loaded.")
     print(f"Total dataset size: {len(train_dataset)} samples")
-
-    # Create a DataLoader for the dataset
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=args.batch_size,
-        shuffle=True,
-        collate_fn=custom_collate_fn
-    )
-
-    print(f"DataLoader initialized with batch size: {args.batch_size}")
 
     # Convert the dataset to a list of samples
     all_samples = [sample for sample in train_dataset]

@@ -81,7 +81,7 @@ done
 
 # Esegui lo script di conversione delle rotte
 echo "Running route converter script..."
-python3 "./route_converter.py" --batch-size "$batch_size" --save-path "./datasets/test_dataset.pt"
+python3 "./route_converter.py" --save-path "./datasets/test_dataset.pt"
 
 # Elimina i file nelle directory dei dataset
 for dir in ./datasets/low ./datasets/moderated ./datasets/heavy; do
