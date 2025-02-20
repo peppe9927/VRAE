@@ -23,7 +23,7 @@ batch_size = 40
 torch.manual_seed(42) # Set the seed for reproducibility
 
 # Load data
-dataset=torch.load('./VRAE/datasets/dataset.pt') # Load the dataset for training
+dataset=torch.load('./VRAE/datasets/training_data.pt') # Load the dataset for training
 
 train_loader = DataLoader(dataset, batch_size=40, shuffle=True, collate_fn=custom_collate_fn)
 
