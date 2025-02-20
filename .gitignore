@@ -173,4 +173,3 @@ cython_debug/
 
 VRAE/datasets/dataset.pt
 VRAE/datasets/*
-VRAE/models
