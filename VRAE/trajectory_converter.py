@@ -11,8 +11,10 @@ import time
 class TrafficGenerativeDatasetTrajectory(Dataset):
     def __init__(self, root_dir, num_workers=4):
         print('Inizializzazione dataset...')
-        self.samples = []
         
+        self.samples = []
+        self.num_worker = num_workers
+
         # Raccolta percorsi file
         for root, _, files in os.walk(root_dir):
             self.samples.extend([os.path.join(root_dir, file) for file in files])
@@ -42,24 +44,23 @@ class TrafficGenerativeDatasetTrajectory(Dataset):
         root = tree.getroot()
         
         # Pre-allocazione dizionario per veicoli
-        vehicles_data = defaultdict(lambda: np.zeros((max_length, 2)))
+        vehicles_data = defaultdict(lambda: np.zeros((max_length, 5)))
         vehicle_lengths = defaultdict(int)
         
         # Estrazione dati
         for timestep in root.findall('timestep'):
             for vehicle in timestep.findall('vehicle'):
                 vid = vehicle.get('id')
-                idx = vehicle_lengths[vid]
+                idx = vehicle_lengths[vid] # 
                 if idx < max_length:
-                    vehicles_data[vid][idx] = [float(vehicle.get('x')), float(vehicle.get('y'))]
+                    vehicles_data[vid][idx] = np.array([float(vehicle.get('x')), float(vehicle.get('y')),float(vehicle.get('speed')),float(vehicle.get('angle')),float(vehicle.get('pos'))])
                     vehicle_lengths[vid] += 1
         
         # Converti in tensore
         sequences = [torch.tensor(data[:length], dtype=torch.float32) 
                     for data, length in zip(vehicles_data.values(), vehicle_lengths.values())]
-        padded_tensor = pad_sequence(sequences, batch_first=True, padding_value=0.0)
-        
-        return padded_tensor
+
+        return sequences
     
     def __len__(self):
         return len(self.samples)
@@ -70,11 +71,23 @@ class TrafficGenerativeDatasetTrajectory(Dataset):
 
 if __name__ == '__main__':
     # Initialize multiprocessing support
-
+    start_time = time.time()
     freeze_support()
     
     # Create dataset
     trj = TrafficGenerativeDatasetTrajectory(root_dir='./datasets/low/trj', num_workers=8)
     
+    with Pool(trj.num_worker) as pool:
+        results = pool.map(trj.__getitem__, range(len(trj)))
+    
     # Process samples
-    print(trj.max_length)
+    
+    flattened = [tensor for sublist in results for tensor in sublist]
+    
+    padded_tensor = pad_sequence(flattened, batch_first=True, padding_value=0.0)
+    
+    print('Dataset completed, dataset composed of:', padded_tensor.shape)
+    
+    end_time = time.time()
+
+    print(f'time of execution {end_time-start_time}')
