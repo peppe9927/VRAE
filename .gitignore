@@ -171,4 +171,4 @@ cython_debug/
 .pypirc
 
 
-VRAE/datasets/dataset.pt
+VRAE/datasets/

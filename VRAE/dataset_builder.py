@@ -72,6 +72,7 @@ config_dir = "./temp_files"
 output_dir = "./datasets"
 
 
+
 def create_config_file(index):
     """
     Create a configuration file using the provided template.
@@ -84,7 +85,7 @@ def create_config_file(index):
     return config_filename
 
 
-def creation_dynamic_route(sumo_config, worker_label, iteration, state,num_processes):
+def creation_dynamic_route(sumo_config, worker_label, iteration, state,num_processes,save_routes):
     """
     Handle dynamic routing and vehicle generation during the simulation.
     """
@@ -119,23 +120,23 @@ def creation_dynamic_route(sumo_config, worker_label, iteration, state,num_proce
                             })
             traci.simulationStep()
             step += 1
+        if save_routes is True:
+            state_dir = os.path.join(output_dir, state)  # Create a directory for the traffic state
+            os.makedirs(state_dir, exist_ok=True)
 
-        state_dir = os.path.join(output_dir, state)  # Create a directory for the traffic state
-        os.makedirs(state_dir, exist_ok=True)
-
-        output_file = os.path.join(
-            state_dir,
-            f"Cars_{worker_label + iteration * num_processes}.rou.xml"
-        )
-        with open(output_file, "w") as fp:
-            fp.write("<routes>\n")
-            fp.write("  <vType accel='7.0' decel='5.0' id='CarA' maxSpeed='20.0' minGap='2.5'/>\n")
-            for vehicle in vehicles:
-                route_string = " ".join(vehicle['rou'])
-                fp.write(f"  <vehicle depart='{vehicle['depart']}' id='veh_{vehicle['id']}' type='CarA'>\n")
-                fp.write(f"    <route edges='{route_string}'/>\n")
-                fp.write("  </vehicle>\n")
-            fp.write("</routes>\n")
+            output_file = os.path.join(
+                state_dir,
+                f"Cars_{worker_label + iteration * num_processes}.rou.xml"
+            )
+            with open(output_file, "w") as fp:
+                fp.write("<routes>\n")
+                fp.write("  <vType accel='7.0' decel='5.0' id='CarA' maxSpeed='20.0' minGap='2.5'/>\n")
+                for vehicle in vehicles:
+                    route_string = " ".join(vehicle['rou'])
+                    fp.write(f"  <vehicle depart='{vehicle['depart']}' id='veh_{vehicle['id']}' type='CarA'>\n")
+                    fp.write(f"    <route edges='{route_string}'/>\n")
+                    fp.write("  </vehicle>\n")
+                fp.write("</routes>\n")
 
         logging.info(f"Simulation completed for worker {worker_label}")
 
@@ -143,17 +144,24 @@ def creation_dynamic_route(sumo_config, worker_label, iteration, state,num_proce
         logging.error(f"Error in simulation function for worker {worker_label}: {e}")
 
 
-def run_simulation(label, port, sumo_config, semaphore, iteration, state,num_processes):
+def run_simulation(label, port, sumo_config, semaphore, iteration, state, num_processes,save_routes):
     """
     Run the SUMO simulation for a specific worker.
     """
     with semaphore:
         try:
+
+            trj_dir = os.path.join(output_dir,state,'trj')
+            os.makedirs(trj_dir,exist_ok=True)
+
+            output_trj = f'trj_{label + iteration * num_processes}.xml'
+            output_file = os.path.join(trj_dir,output_trj)
+
             logging.info(f"Initializing worker {label} on port {port} with config {sumo_config}")
-            sumoCmd = ["sumo", "-c", sumo_config]
+            sumoCmd = ["sumo", "-c", sumo_config,'--fcd-output',output_file]
             traci.start(sumoCmd, port=port, label=str(label))
             
-            creation_dynamic_route(sumo_config, label, iteration, state,num_processes)
+            creation_dynamic_route(sumo_config, label, iteration, state,num_processes,save_routes)
             
         except Exception as e:
             logging.error(f"Error in simulation {label}: {e}")
@@ -166,7 +174,10 @@ def run_simulation(label, port, sumo_config, semaphore, iteration, state,num_pro
                 logging.error(f"Error closing worker {label}: {e}")
 
 
-def main(NUM_ITERATIONS, NUM_PROCESSES, MAX_CONCURRENT, state):
+def main(NUM_ITERATIONS, NUM_PROCESSES, MAX_CONCURRENT, state,save):
+
+
+
     config_files = [create_config_file(i) for i in range(1, NUM_PROCESSES + 1)]
     logging.info(f"{NUM_PROCESSES} configuration files created in directory '{config_dir}'.")
 
@@ -182,7 +193,7 @@ def main(NUM_ITERATIONS, NUM_PROCESSES, MAX_CONCURRENT, state):
         semaphore = Semaphore(MAX_CONCURRENT)  # Limit the number of concurrent processes
 
         for label, port, config in zip(labels, ports, config_files):
-            p = Process(target=run_simulation, args=(label, port, config, semaphore, iteration, state,NUM_PROCESSES))
+            p = Process(target=run_simulation, args=(label, port, config, semaphore, iteration, state,NUM_PROCESSES,save))
             p.start()
             processes.append(p)
             logging.info(f"Worker {label} started on port {port}")
@@ -218,6 +229,8 @@ if __name__ == "__main__":
     parser.add_argument('--concurrent', type=int, default=50, help='Maximum number of concurrent processes')
     parser.add_argument('--state', type=str, choices=['low', 'moderated', 'heavy'], required=True,
                         help='Traffic state (low, moderated, heavy)')
+    parser.add_argument('--save', type=bool, required=True,
+                        help='Traffic state (low, moderated, heavy)')
     args = parser.parse_args()
     
-    main(args.iterations, args.processes, args.concurrent, args.state)  # Run the simulation
+    main(args.iterations, args.processes, args.concurrent, args.state,args.save)  # Run the simulation
