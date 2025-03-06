@@ -67,3 +67,23 @@ class TimeGAN(nn.Module):
 
 
         return X_tilde, X_hat, H_hat, H_hat_supervise, Y_real, Y_fake
+    
+    def embedder_forward(self, X, T):
+        H = self.embedder(X, T)
+        return H
+    
+    def recovery_forward(self, H, T):
+        R = self.recovery(H, T)
+        return R
+    
+    def generator_forward(self, z, T):
+        E_hat = self.generator(z, T)
+        return E_hat
+    
+    def supervisor_forward(self, E_hat, T):
+        H_hat = self.supervisor(E_hat, T)
+        return H_hat
+    
+    def discriminator_forward(self, H, T):
+        Y = self.discriminator(H, T)
+        return Y

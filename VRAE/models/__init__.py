@@ -1,4 +1,4 @@
-from .encoder import Encoder
-from .decoder import Decoder
-from .vae import VRAE
+from .VRAE.encoder import Encoder
+from .VRAE.decoder import Decoder
+from .VRAE.vae import VRAE
 from .timeGAN import TimeGAN

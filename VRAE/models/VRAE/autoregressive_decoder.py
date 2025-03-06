@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-class Decoder(nn.Module):
+class AutoRegressiveDecoder(nn.Module):
     def __init__(self, sensor_dim, num_routes, num_hidden, num_latent):
         """
         Parametri:
@@ -12,7 +12,7 @@ class Decoder(nn.Module):
           num_hidden : dimensione dello stato nascosto della LSTM decoder.
           num_latent : dimensione dello spazio latente.
         """
-        super(Decoder, self).__init__()
+        super(AutoRegressiveDecoder, self).__init__()
         
         # Decoder LSTM: prende in input un vettore latente (differenziato ad ogni step grazie all'autoregressione)
         self.decoder_lstm = nn.LSTM(num_latent, num_hidden, batch_first=True)
