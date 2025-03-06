@@ -3,16 +3,17 @@ import torch.nn as nn
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 
 # Importing the modules of the architecture
-from embedder import Embedder
-from recovery import Recovery
-from generator import Generator
-from supervisor import Supervisor
-from discriminator import Discriminator
+from .embedder import Embedder
+from .recovery import Recovery
+from .generator import Generator
+from .supervisor import Supervisor
+from .discriminator import Discriminator
 
 class TimeGAN(nn.Module):
-    def __init__(self, ori_data,hidden_dim,num_layers, cell_type = 'GRU'):
+    def __init__(self, input_dim, hidden_dim,num_layers, cell_type = 'GRU'):
+        super(TimeGAN, self).__init__()
         # ori_data: (batch, seq_len, dim)
-        self.f_dim = ori_data.shape[2] #
+        self.f_dim = input_dim #
         self.hidden_dim = hidden_dim
         self.num_layers = num_layers
         self.cell_type = cell_type
@@ -40,13 +41,13 @@ class TimeGAN(nn.Module):
         )
         # Supervisor
         self.supervisor = Supervisor(
-            hidden_dim= self.hidden_dim,
+            num_hidden= self.hidden_dim,
             num_layers= self.num_layers,
             cell_type= self.cell_type
         )
         # Discriminator
         self.discriminator = Discriminator(
-            hidden_dim= self.hidden_dim,
+            num_hidden= self.hidden_dim,
             num_layers= self.num_layers,
             cell_type= self.cell_type
         )

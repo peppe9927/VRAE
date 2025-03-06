@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
-from models.encoder import Encoder
-from models.autoregressive_decoder import Decoder
+from .encoder import Encoder
+from .autoregressive_decoder import Decoder
 
 class VRAE(nn.Module):
     def __init__(self, sensor_dim, num_routes, route_emb_dim, num_hidden, num_latent):

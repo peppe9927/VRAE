@@ -9,7 +9,8 @@ class Supervisor(nn.Module):
     the temporal dynamics. """
 
     def __init__(self, num_hidden, num_layers,cell_type = 'GRU'):
-        super(Supervisor).__init__()
+        super(Supervisor,self).__init__()
+        
         if cell_type == 'LSTM':
             self.rnn = nn.LSTM(num_hidden, num_hidden, num_layers, batch_first=True)
         elif cell_type == 'GRU':
