@@ -1,24 +1,32 @@
 import torch
 import torch.nn as nn
+from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 
-class Recover(nn.Module):
-    def __init__(self, latent_size, output_size, hidden_size, num_layers=1):
-        super(Recover, self).__init__()
-        self.hidden_size = hidden_size
-        self.num_layers = num_layers
+class Discriminator(nn.Module):
+    def __init__(self, num_hidden, num_layers, cell_type = 'GRU'):
+        super(Discriminator,self).__init__()
+
+        if cell_type == 'LSTM':
+            self.rnn = nn.LSTM(num_hidden, num_hidden, num_layers, batch_first=True, bidirectional=True)
+        elif cell_type == 'GRU':
+            self.rnn = nn.GRU(num_hidden, num_hidden, num_layers, batch_first=True, bidirectional=True)
+        elif cell_type == 'RNN':
+            self.rnn = nn.RNN(num_hidden, num_hidden, num_layers, batch_first=True, bidirectional=True)
+        else:
+            print('Invalid cell type, using default GRU')
+            self.rnn = nn.GRU(num_hidden, num_hidden, num_layers, batch_first=True, bidirectional=True)
         
-        # Definisci la rete ricorrente (RNN)
-        self.rnn = nn.RNN(latent_size, hidden_size, num_layers, batch_first=True)
+        # Output size is doubled due to bidirectional RNN
         
-        # Definisci un livello fully connected per riportare allo spazio originale
-        self.fc = nn.Linear(hidden_size, output_size)
+        self.fc = nn.Sequential(
+            nn.Linear(num_hidden*2, 1),
+            nn.Sigmoid())
     
-    def forward(self, x):
-        # Inizializza lo stato nascosto
-        h0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)
+    def forward(self, x, T):
         
-        # Passa l'input attraverso la RNN
-        out, hn = self.rnn(x, h0)
-        
-        # Passa l'output della RNN attraverso il livello fully connected
-        out = self.fc(out)
+        packed = pack_padded_sequence(x, T, batch_first=True, enforce_sorted=False)
+        output, hidden = self.rnn(packed)
+        output, _ = pad_packed_sequence(output, batch_first=True)
+        Y_hat = self.fc(output)
+
+        return Y_hat
