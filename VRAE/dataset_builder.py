@@ -229,8 +229,7 @@ if __name__ == "__main__":
     parser.add_argument('--concurrent', type=int, default=50, help='Maximum number of concurrent processes')
     parser.add_argument('--state', type=str, choices=['low', 'moderated', 'heavy'], required=True,
                         help='Traffic state (low, moderated, heavy)')
-    parser.add_argument('--save', type=bool, required=True,
-                        help='Traffic state (low, moderated, heavy)')
+    parser.add_argument('--save', action='store_true', help='Save generated routes')
     args = parser.parse_args()
     
     main(args.iterations, args.processes, args.concurrent, args.state,args.save)  # Run the simulation

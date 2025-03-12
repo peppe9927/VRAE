@@ -1,234 +1,323 @@
+from VRAE import Generator, Discriminator, Supervisor, Recovery, Embedder
+from VRAE import weights_init
+from VRAE import random_generator
 import torch
-import torch.optim as optim
-import torch.nn as nn
+from torch import optim
 from torch.utils.data import DataLoader, TensorDataset
-import torch.nn.functional as F  # Add this import for loss functions
+import torch.nn as nn
+import numpy as np
+import torch.nn.functional as F
 
-from VRAE import TimeGAN
+# Set device
+device = 'cuda' if torch.cuda.is_available() else 'mps' if torch.mps.is_available() else 'cpu'
+device = torch.device(device)
+print(device)
 
-def discriminator_loss(Y_real, Y_fake, Y_fake_e, gamma=1.0):
-    """
-    Calculates the discriminator loss in TimeGAN architecture.
-    
-    The discriminator tries to distinguish between real and generated sequences.
-    This loss function encourages the discriminator to correctly classify:
-    - Real sequences as real (label=1)
-    - Generated sequences as fake (label=0)
-    
-    Args:
-        Y_real (torch.Tensor): Discriminator output on real data.
-        Y_fake (torch.Tensor): Discriminator output on supervised generated data.
-        Y_fake_e (torch.Tensor): Discriminator output on directly generated data.
-        gamma (float): Weight factor for the Y_fake_e term.
-        
-    Returns:
-        torch.Tensor: Total discriminator loss.
-    """
-    # For real data, target is 1
-    D_loss_real = F.binary_cross_entropy(Y_real, torch.ones_like(Y_real))
-    
-    # For generated data, target is 0
-    D_loss_fake = F.binary_cross_entropy(Y_fake, torch.zeros_like(Y_fake))
-    D_loss_fake_e = F.binary_cross_entropy(Y_fake_e, torch.zeros_like(Y_fake_e))
-    
-    # Total loss: sum of components, with gamma balancing the loss_fake_e term
-    D_loss_total = D_loss_real + D_loss_fake + gamma * D_loss_fake_e
-    return D_loss_total
+# Set random seed for reproducibility
+
+random_seed = 42
+torch.manual_seed(random_seed)
+
+# data loading
+
+trajectory_dataset = torch.load("./trajectory_dataset.pt")
+
+# Print basic information about the dataset
+print(f"Type of loaded file: {type(trajectory_dataset)}")
 
 
-def generator_loss(Y_fake, Y_fake_e, H, H_hat_supervise, X, X_hat, gamma=1.0):
-    """
-    Calculates the total generator loss in TimeGAN.
-    
-    This complex loss function has multiple components:
-    1. Adversarial loss - Makes generated data look realistic to the discriminator
-    2. Supervised loss - Ensures temporal coherence in generated sequences
-    3. Moment matching loss - Aligns statistical properties between real and generated data
-    
-    Args:
-        Y_fake (torch.Tensor): Discriminator output on supervised generated sequences.
-        Y_fake_e (torch.Tensor): Discriminator output on directly generated sequences.
-        H (torch.Tensor): Real latent sequence from the embedder.
-        H_hat_supervise (torch.Tensor): Supervisor output applied to real latent sequence.
-        X (torch.Tensor): Original real data.
-        X_hat (torch.Tensor): Synthetic data reconstructed by applying Recovery to H_hat.
-        gamma (float): Weight factor for the direct generator adversarial term.
-    
-    Returns:
-        tuple: (Total generator loss, Supervised loss component)
-    """
-    # 1. Adversarial Loss: Forces generator to fool the discriminator
-    G_loss_U = F.binary_cross_entropy(Y_fake, torch.ones_like(Y_fake))
-    G_loss_U_e = F.binary_cross_entropy(Y_fake_e, torch.ones_like(Y_fake_e))
-    
-    # 2. Supervised Loss: Ensures temporal coherence by predicting next step in sequence
-    # Compares H[:, 1:, :] (real sequence shifted by one step) with H_hat_supervise[:, :-1, :]
-    G_loss_S = F.mse_loss(H[:, 1:, :], H_hat_supervise[:, :-1, :])
-    
-    # 3. Moment Matching Loss: Aligns statistical properties (mean and std) between real and synthetic data
-    mean_real = torch.mean(X, dim=0)
-    mean_fake = torch.mean(X_hat, dim=0)
-    std_real = torch.sqrt(torch.var(X, dim=0) + 1e-6)
-    std_fake = torch.sqrt(torch.var(X_hat, dim=0) + 1e-6)
-    G_loss_V = F.l1_loss(mean_fake, mean_real) + F.l1_loss(std_fake, std_real)
-    
-    # 4. Total Generator Loss: Combines components with empirical weights
-    # Square root of supervised loss and factor of 100 for supervision and moment matching
-    loss_gen = G_loss_U + gamma * G_loss_U_e + 100 * torch.sqrt(G_loss_S) + 100 * G_loss_V
-    return loss_gen, G_loss_S
+# If it's a dictionary, print the keys
+if isinstance(trajectory_dataset, dict):
+    print(f"Keys: {trajectory_dataset.keys()}")
+    # Print shapes of items
+    for key, value in trajectory_dataset.items():
+        if isinstance(value, torch.Tensor):
+            print(f"{key} shape: {value.shape}")
+        elif hasattr(value, '__len__'):
+            print(f"{key} length: {len(value)}")
+        else:
+            print(f"{key} type: {type(value)}")
+# If it's a tensor, print its shape
+elif isinstance(trajectory_dataset, torch.Tensor):
+    print(f"Tensor shape: {trajectory_dataset.shape}")
+# If it's another container type, print its length
+elif hasattr(trajectory_dataset, '__len__'):
+    print(f"Dataset length: {len(trajectory_dataset)}")
 
+max_seq_len = trajectory_dataset['max_length']
 
-def embedder_loss(X, X_tilde, G_loss_S, eps=1e-6):
-    """
-    Calculates the embedder loss in TimeGAN.
-    
-    The embedder maps real data to latent space. This loss ensures:
-    1. Reconstruction quality - Data can be properly reconstructed from latent space
-    2. Temporal coherence - By incorporating the supervised loss from the generator
-    
-    Args:
-        X (torch.Tensor): Original data.
-        X_tilde (torch.Tensor): Reconstructed data via Recovery network.
-        G_loss_S (torch.Tensor): Supervised loss (to reinforce temporal coherence).
-        eps (float): Small value to avoid division by zero in square root.
-    
-    Returns:
-        torch.Tensor: Total embedder loss.
-    """
-    # Reconstruction loss (MSE between original and reconstructed data)
-    E_loss_T0 = F.mse_loss(X_tilde, X)
-    
-    # E_loss0: square root of MSE, multiplied by 10 for scaling
-    E_loss_0 = 10 * torch.sqrt(E_loss_T0 + eps)
-    
-    # Total embedder loss: combines reconstruction with a fraction of supervised loss
-    E_loss = E_loss_0 + 0.1 * G_loss_S
-    return E_loss
+dataset = TensorDataset(trajectory_dataset['data'], trajectory_dataset['lengths'])
 
+train_loader = DataLoader(dataset, batch_size=64, shuffle=True)
+
+# set the hyperparameters
 
 EPOCHS = 100
-NUM_BATCHES = 100
-LEN_BATCH = 128
+BATCH_SIZE = 64
+LATENT_DIM = 100
 
-model = TimeGAN(
-    input_dim= 5, # input dimension
-    hidden_dim= 100, # embedding dimension
-    num_layers= 1, # number of layers
-    cell_type= 'GRU'
-    )
-    
+gen_lr = 0.001
+dis_lr = 0.001
+embedder_lr = 0.001
+supervise_lr = 0.001
 
-# Define optimizers
+gamma = 0.1
+seq_len = 50
+input_dim = 5
 
-# Embedder and recovery
-Opt_E0 = optim.Adam(list(model.embedder.parameters(),model.recovery.parameters()), lr=0.001)
-Opt_E = optim.Adam(list(model.embedder.parameters(),model.recovery.parameters()), lr=0.001)
-# Discriminator
-Opt_D = optim.Adam(model.discriminator.parameters(), lr=0.001)
-# Generator and supervisor
-Opt_G = optim.Adam(list(model.generator.parameters(),model.supervisor.parameters()), lr=0.001)
-Opt_G_S = optim.Adam(list(model.generator.parameters(),model.supervisor.parameters()), lr=0.001)
+# Set random seed for reproducibility
+torch.manual_seed(random_seed)
+
+# define the models
+hidden_dim_generator = 100
+num_layers_generator = 1
+cell_type_generator = 'GRU'
+generator = Generator(hidden_dim = hidden_dim_generator,
+                      num_layers = num_layers_generator,
+                      max_seq = max_seq_len,
+                      cell_type = cell_type_generator)
+generator.apply(weights_init)
+generator.to(device)
+
+num_layers_discriminator = 1
+hidden_dim_discriminator = 100
+cell_type_discriminator = 'GRU'
+
+discriminator = Discriminator(num_hidden = hidden_dim_discriminator,
+                              num_layers = num_layers_discriminator,
+                                max_seq = max_seq_len,
+                              cell_type = cell_type_discriminator)
+discriminator.apply(weights_init)
+discriminator.to(device)
+
+num_layers_supervisor = 1
+hidden_dim_supervisor = 100
+cell_type_supervisor = 'GRU'
+
+supervisor = Supervisor(num_hidden = hidden_dim_supervisor,
+                        num_layers = num_layers_supervisor,
+                        max_seq = max_seq_len,
+                        cell_type = cell_type_supervisor)
+supervisor.apply(weights_init)
+supervisor.to(device)
+
+num_layers_embedder = 1
+hidden_dim_embedder = 100
+cell_type_embedder = 'GRU'
+
+embedder = Embedder(inpt_dim = input_dim,
+                    hidden_dim = hidden_dim_embedder,
+                    num_layers = num_layers_embedder,
+                    max_seq = max_seq_len,
+                    cell_type = cell_type_embedder)
+embedder.apply(weights_init)
+embedder.to(device)
+
+hidden_dim_recovery = 100
+num_layers_recovery = 1
+cell_type_recovery = 'GRU'
+
+recovery = Recovery(hidden_dim = hidden_dim_recovery,
+                    feature_dim = input_dim,
+                    num_layers = num_layers_recovery,
+                    max_seq = max_seq_len,
+                    cell_type = cell_type_recovery)
+recovery.apply(weights_init)
+recovery.to(device)
+
+# Define optimizers (one per parameter group)
+optimizer_E = optim.Adam(
+    list(embedder.parameters()) + list(recovery.parameters()),
+    lr=embedder_lr
+)
+optimizer_G = optim.Adam(
+    list(generator.parameters()) + list(supervisor.parameters()),
+    lr=gen_lr
+)
+optimizer_D = optim.Adam(discriminator.parameters(), lr=dis_lr)
 
 # Define loss functions
 mse_loss = nn.MSELoss()
 bce_loss = nn.BCELoss()
 
-# Training loop
 
-seq_len = 50
-input_dim = 5
-batch_size = 64
-data = torch.randn(1000, seq_len, input_dim)
+emb_costs = []
+emb_rec_costs = []
+PRE_TRAIN_EPOCHS = 100
 
-dataset = TensorDataset(data)
-dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
-
-for epoch in range(EPOCHS): # loop over the dataset multiple times
-    
-    for batch, X in enumerate(dataloader): # loop over batches
+for epoch in range(PRE_TRAIN_EPOCHS):
+    # pre-training of the embedder and recovery
+    for i, (real_samples, seq_lens) in enumerate(train_loader): 
         
-        model.train()
+        embedder.train()
+        recovery.train()
 
-        # Step 1: Embedder
-        Opt_E0.zero_grad()
-        Opt_E.zero_grad()
+        real_samples = real_samples.to(device) # Send data to GPU
+        seq_lens = seq_lens.to(device) # Send sequence lengths to GPU
 
-        H = model.embedder(X,T) # create latent representation
-        H_hat_Supervise = model.supervisor(H,T)
-        X_tilde = model.recovery(H,T) # reconstruct data from latent representation
+        real_labels = torch.ones(real_samples.size(0), 1).to(device)
+        fake_labels = torch.zeros(real_samples.size(0), 1).to(device)
+
+        # Train the embedder
+        optimizer_E.zero_grad() # Reset gradients
+        
+        # create latent representation
+        H = embedder(real_samples, seq_lens) 
+        # refine latent representation
+        X_tilde = recovery(H,seq_lens)
         
         # Calculate embedder loss
-        G_loss_S = mse_loss(H[:, 1:, :], H_hat_Supervise[:, :-1, :]) # supervised loss
-        E_loss_T0 = mse_loss(X_tilde, X) # reconstruction loss
+        E_loss_T0 = mse_loss(X_tilde, real_samples) # reconstruction loss
         E_loss0 = 10*torch.sqrt(E_loss_T0)
-        E_loss = E_loss0 + 0.1*G_loss_S # total embedder loss
-
-        # Backpropagate and update weights
-        E_loss.backward()
         E_loss0.backward()
 
-        Opt_E0.step()
-        Opt_E.step()
+        # Update embedder and recovery parameters
+        optimizer_E.step()
+        
+        emb_costs.append(E_loss0.item())
 
-    for batch, X in enumerate(dataloader): # loop over batches
+        if not i % 100: 
+            print ('Epoch: %03d/%03d | Batch %03d/%03d | Reconstruction Loss: %.4f' 
+                    %(epoch+1, EPOCHS, i, 
+                        len(train_loader), E_loss0))
 
-        model.train()
-        # Step 2: Generator, supervised only
+    # supervised training of the embedder
 
-        Opt_G_S.zero_grad()
 
-        Z_mb = torch.randn(LEN_BATCH, seq_len, input_dim) # sample random noise
-        H = model.embedder(X,T) # create latent representation
-        H_hat_Supervise = model.supervisor(H,T)
-        E_hat = model.generator(Z_mb,T)
-        H_hat = model.supervisor(E_hat,T)
+supervisor_costs = []
+
+for epoch in range(EPOCHS):
+    # Step 2: Generator, supervised only
+    for i, (real_samples, seq_lens) in enumerate(train_loader):  # loop over batches
+
+        real_samples = real_samples.to(device)
+        seq_lens = seq_lens.to(device)
+
+        generator.train()
+        supervisor.train()
+
+        optimizer_G.zero_grad()
+
+        # generate real data embeddings
+        H = embedder(real_samples,seq_lens).detach()
+        H_hat_Supervise = supervisor(H, seq_lens)
 
         G_loss_S = mse_loss(H[:, 1:, :], H_hat_Supervise[:, :-1, :]) # supervised loss
         G_loss_S.backward()
-        Opt_G_S.step()
-
-    for batch, X in enumerate(dataloader): # loop over batches
-
-        model.train()
-        # Step 3: Generator, joint training
-        Opt_G.zero_grad()
-
-        Z_mb = torch.randn(LEN_BATCH, seq_len, input_dim) # sample random noise
-        E_hat = model.generator(Z_mb,T)
-        H_hat = model.supervisor(E_hat,T)
-        X_hat = model.recovery(H_hat,T)
-
-        Y_fake_e = model.discriminator(E_hat,T) 
-        Y_fake = model.discriminator(H_hat,T)
-
-        G_loss_U = bce_loss(torch.ones_like(Y_fake), Y_fake)
-        G_loss_U_e = bce_loss(torch.ones_like(Y_fake_e), Y_fake_e)
-        G_loss_S = mse_loss(H[:, 1:, :], H_hat[:, :-1, :])
-        G_loss_V1 = torch.mean(torch.abs(torch.sqrt(torch.var(X, dim=0) + 1e-6) - torch.sqrt(torch.var(X_hat, dim=0) + 1e-6)))
-        G_loss_V2 = torch.mean(torch.abs(torch.mean(X, dim=0) - torch.mean(X_hat, dim=0)))
-        G_loss_V = G_loss_V1 + G_loss_V2
-
-        G_loss = G_loss_U + G_loss_U_e + 100*torch.sqrt(G_loss_S) + 100*G_loss_V
-        G_loss.backward()
-        Opt_G.step()
-
-        # embedder loss
-
-        Opt_E.zero_grad() 
         
-        H = model.embedder(X,T) # create latent representation
-        X_tilde = model.recovery(H,T) # reconstruct data from latent representation
-       
-        E_loss_T0 = mse_loss(X_tilde, X) # reconstruction loss
-        E_loss_T0.backward()
-        Opt_E.step()
+        optimizer_G.step()
+
+        supervisor_costs.append(G_loss_S.item())
+
+        if not i % 100: 
+            print ('Epoch: %03d/%03d | Batch %03d/%03d | Supervisor Loss: %.4f' 
+                    %(epoch+1, EPOCHS, i, 
+                        len(train_loader), G_loss_S))
+
+generator_losses = []
+discriminator_losses = []
+emb_costs = []
+supervisor_costs = []
+for epoch in range(EPOCHS):
+    for i,(real_samples, seq_lens) in enumerate(train_loader):
+        
+        # discriminator network
+        discriminator.train()
+        # generator network
+        generator.train()
+        supervisor.train()
+        # embedding network 
+        embedder.train()
+        recovery.train()
+
+        
+        real_samples = real_samples.to(device)
+        seq_lens = seq_lens.to(device)
+        # train the generator twice as much as the discriminator
+        for kk in range(2): 
+            # Step 3.1: Generator training
+            optimizer_G.zero_grad()
+
+            
+            # sample random noise
+            Z_mb = random_generator(len(real_samples), hidden_dim_generator, seq_lens, seq_len)
+            H = embedder(real_samples,seq_lens).detach() 
+            # generate fake data embeddings
+            E_hat = generator(Z_mb,seq_lens)
+            # refine fake data embeddings
+            H_hat = supervisor(E_hat,seq_lens)
+            # reconstruct fake data
+            X_hat = recovery(H_hat,seq_lens).detach()
+            # discriminator outputs
+            Y_fake = discriminator(H_hat, seq_lens).detach() # 
+            Y_real = discriminator(H, seq_lens).detach()     
+            Y_fake_e = discriminator(E_hat, seq_lens).detach()
+            
+            # unsupervised loss
+            G_loss_U = bce_loss(torch.ones_like(Y_fake), Y_fake) # after supervisor
+            G_loss_U_e = bce_loss(torch.ones_like(Y_fake_e), Y_fake_e) # before supervisor
+            # supervised loss
+            # H_hat = supervisor(generator(Z_mb,seq_lens),seq_lens)
+            G_loss_S = mse_loss(H[:, 1:, :], H_hat[:, :-1, :]) # supervised loss
+            
+            G_loss_V1 = torch.mean(torch.abs(torch.sqrt(torch.var(real_samples, dim=0) + 1e-6) - torch.sqrt(torch.var(X_hat, dim=0) + 1e-6)))
+            G_loss_V2 = torch.mean(torch.abs(torch.mean(real_samples, dim=0) - torch.mean(X_hat, dim=0)))
+            G_loss_V = G_loss_V1 + G_loss_V2
+            
+            # Total generator loss
+            G_loss = G_loss_U + G_loss_U_e + 100*torch.sqrt(G_loss_S) + 100*G_loss_V 
+            G_loss.backward()
+            optimizer_G.step()
+            generator_losses.append(G_loss.item())
+            supervisor_costs.append(G_loss_S.item())
 
 
+            # step 3.2: embedder and recovery training
+            optimizer_E.zero_grad()
+            
+            X_tilde = recovery(H, seq_lens) 
+            # reconstrucion loss
+            E_loss_T0 = mse_loss(X_tilde, real_samples)
+            E_loss_T0.backward()
+            optimizer_E.step()
+            emb_costs.append(E_loss_T0.item())
+        
+        # Step 4: Discriminator training
+        optimizer_D.zero_grad()  # Zero discriminator gradients
+        
+        # Get discriminator outputs for real data
 
+        H = embedder(real_samples, seq_lens).detach()  # Embed real data
 
+        E_hat = generator(Z_mb, seq_lens).detach()  # Generate fake data
+        H_hat = supervisor(E_hat, seq_lens).detach()  # Supervise fake data
+        X_hat = recovery(H_hat, seq_lens).detach()  # Recover fake data
 
+        Y_fake = discriminator(H_hat, seq_lens)  # Prediction on supervised fake data
+        Y_fake_e = discriminator(E_hat, seq_lens)  # Prediction on directly generated data
+        Y_real = discriminator(H, seq_lens)  # Discriminator prediction on real data
+        
+        # Calculate discriminator loss - wants to predict real=1, fake=0
+        D_loss_real = bce_loss(Y_real, torch.ones_like(Y_real))
+    
+        # For generated data, target is 0
+        D_loss_fake = bce_loss(Y_fake, torch.zeros_like(Y_fake))
+        D_loss_fake_e = bce_loss(Y_fake_e, torch.zeros_like(Y_fake_e))
+        
+        # Total loss: sum of components, with gamma balancing the loss_fake_e term
+        D_loss = D_loss_real + D_loss_fake + gamma * D_loss_fake_e
+    
 
+        # Backpropagate and update discriminator weights
+        D_loss.backward()
+        
+        optimizer_D.step()
+        discriminator_losses.append(D_loss.item())
 
-
-
-
+        if not i % 100:
+            print ('Epoch: %03d/%03d | Batch %03d/%03d | Discriminator Loss: %.4f' 
+                    %(epoch+1, EPOCHS, i, 
+                        len(train_loader), D_loss))
+            print ('Generator Loss: %.4f | Embedder Loss: %.4f | Supervisor Loss: %.4f'
+                    %(G_loss, E_loss_T0, G_loss_S))
+            

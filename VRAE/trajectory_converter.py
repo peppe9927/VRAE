@@ -7,6 +7,7 @@ import numpy as np
 from torch.nn.utils.rnn import pad_sequence
 from multiprocessing import Pool, freeze_support
 import time
+from torch.utils.data import TensorDataset
 
 class TrafficGenerativeDatasetTrajectory(Dataset):
     def __init__(self, root_dir, num_workers=4):
@@ -94,12 +95,39 @@ if __name__ == '__main__':
     
     # Process samples
     
-    flattened = [tensor for sublist in results for tensor in sublist]
+    flattened = []
+    sequence_lengths = []
     
+    # Flatten results and record lengths
+    for sublist in results:
+        for tensor in sublist:
+            flattened.append(tensor)
+            sequence_lengths.append(tensor.size(0))  # Salva la lunghezza di ogni sequenza
+    
+    # Converti le lunghezze in un tensore
+    lengths_tensor = torch.tensor(sequence_lengths, dtype=torch.long)
+    
+    # Crea il tensore paddato
     padded_tensor = pad_sequence(flattened, batch_first=True, padding_value=0.0)
     
+    
+    
+    # Salva il TensorDataset
+    torch.save({
+        'data': padded_tensor,
+        'lengths': lengths_tensor,
+        'max_length': trj.max_length
+    }, 'trajectory_dataset.pt')
+    
     print('Dataset completed, dataset composed of:', padded_tensor.shape)
+    print(f'Sequences count: {len(sequence_lengths)}')
+    print(f'Min sequence length: {min(sequence_lengths)}, Max sequence length: {max(sequence_lengths)}')
     
     end_time = time.time()
-
+    print(f'time of execution {end_time-start_time}')
+    print('Dataset completed, dataset composed of:', padded_tensor.shape)
+    print(f'Sequences count: {len(sequence_lengths)}')
+    print(f'Min sequence length: {min(sequence_lengths)}, Max sequence length: {max(sequence_lengths)}')
+    
+    end_time = time.time()
     print(f'time of execution {end_time-start_time}')
